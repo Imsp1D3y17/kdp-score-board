@@ -1,0 +1,6 @@
+{
+  "name": "KDP Author Scorecard",
+  "description": "A clear, color-coded diagnostic scorecard that breaks Amazon KDP book analytics into simple scored sections to show authors exactly what they are missing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
