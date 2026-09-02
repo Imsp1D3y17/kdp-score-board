@@ -1,6 +1,9 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
+async function createViteServer(options: any): Promise<any> {
+  const { createServer } = await import("vite");
+  return createServer(options);
+}
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 
