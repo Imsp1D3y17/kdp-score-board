@@ -10,7 +10,67 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Trust proxy for accurate client IP identification on Vercel / Cloud Run
+app.set("trust proxy", 1);
+
 app.use(express.json({ limit: "5mb" }));
+
+// In-memory sliding window rate limiter to protect serverless functions and AI quota
+interface RateLimitRecord {
+  count: number;
+  resetTime: number;
+}
+const ipRateLimitMap = new Map<string, RateLimitRecord>();
+
+// Clean up stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of ipRateLimitMap.entries()) {
+    if (now > record.resetTime) {
+      ipRateLimitMap.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
+function apiRateLimiter(maxRequests: number = 60, windowMs: number = 60 * 1000) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    // Exclude health checks
+    if (req.path === "/api/health") {
+      return next();
+    }
+
+    const clientIp =
+      (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+      req.socket.remoteAddress ||
+      "unknown-ip";
+
+    const now = Date.now();
+    let record = ipRateLimitMap.get(clientIp);
+
+    if (!record || now > record.resetTime) {
+      record = { count: 1, resetTime: now + windowMs };
+      ipRateLimitMap.set(clientIp, record);
+    } else {
+      record.count += 1;
+    }
+
+    res.setHeader("X-RateLimit-Limit", maxRequests);
+    res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - record.count));
+    res.setHeader("X-RateLimit-Reset", Math.ceil(record.resetTime / 1000));
+
+    if (record.count > maxRequests) {
+      return res.status(429).json({
+        error: "Too many requests. Please slow down and try again in a minute.",
+        retryAfterSeconds: Math.ceil((record.resetTime - now) / 1000),
+      });
+    }
+
+    next();
+  };
+}
+
+// Apply rate limiter to all API endpoints (60 reqs/min per IP)
+app.use("/api", apiRateLimiter(60, 60 * 1000));
 
 // Lazy init Stripe client to prevent startup failure if key is missing
 let stripeClient: Stripe | null = null;
