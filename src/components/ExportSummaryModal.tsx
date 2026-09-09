@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Download, Copy, Check, Printer, BookOpen, CheckCircle2, Share2 } from 'lucide-react';
+import { X, Download, Copy, Check, Printer, BookOpen, CheckCircle2, Share2, Mail, Send, Loader2, ExternalLink } from 'lucide-react';
 import { BookMetrics, ComputedMetrics, ScoreItem, ScoreStatus } from '../types';
+import { trackEvent } from '../utils/analytics';
 
 interface ExportSummaryModalProps {
   isOpen: boolean;
@@ -24,8 +25,69 @@ export const ExportSummaryModal: React.FC<ExportSummaryModalProps> = ({
   onOpenShareModal,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [fallbackMailto, setFallbackMailto] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleSendEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      setEmailError('Please enter a valid email address.');
+      return;
+    }
+
+    setEmailSending(true);
+    setEmailError(null);
+    setEmailSuccess(null);
+
+    try {
+      const shareUrl = typeof window !== 'undefined' ? window.location.href : 'https://kdp-score-board.vercel.app';
+      const res = await fetch('/api/send-report-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipientEmail,
+          bookTitle: metrics.title,
+          genre: metrics.genre,
+          overallScore,
+          overallStatus,
+          computed,
+          sections: sections.map(s => ({
+            title: s.title,
+            score: s.score,
+            status: s.status,
+            headline: s.headline,
+            prescription: s.prescription,
+          })),
+          shareUrl,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to dispatch email');
+      }
+
+      setEmailSuccess(data.message || `Scorecard report sent to ${recipientEmail}!`);
+      if (data.mailtoUrl) {
+        setFallbackMailto(data.mailtoUrl);
+      }
+      trackEvent('report_email_dispatched', {
+        title: metrics.title,
+        recipientEmail,
+        delivered: data.delivered,
+        provider: data.provider,
+      });
+    } catch (err: any) {
+      setEmailError(err.message || 'Error dispatching email. You can still print or copy markdown.');
+    } finally {
+      setEmailSending(false);
+    }
+  };
 
   const handleCopyMarkdown = () => {
     let md = `# KDP Author Diagnostic Scorecard: ${metrics.title || 'Untitled Book'}\n`;
@@ -145,6 +207,75 @@ export const ExportSummaryModal: React.FC<ExportSummaryModalProps> = ({
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Email Dispatch Section */}
+        <div className="bg-neutral-900 text-white rounded-xl p-4 sm:p-5 mb-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Mail className="w-4 h-4 text-emerald-400" />
+            <h5 className="text-xs font-bold text-white tracking-wide uppercase">
+              Email This Scorecard Audit
+            </h5>
+          </div>
+          <p className="text-xs text-neutral-400 mb-3">
+            Send this diagnostic breakdown directly to yourself, a co-author, or client.
+          </p>
+
+          <form onSubmit={handleSendEmail} className="space-y-2">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                id="input-export-recipient-email"
+                type="email"
+                required
+                placeholder="Enter recipient email (e.g. author@example.com)"
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+                className="flex-1 bg-neutral-800 border border-neutral-700 text-white placeholder-neutral-500 rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+              />
+              <button
+                id="btn-send-scorecard-email"
+                type="submit"
+                disabled={emailSending}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition cursor-pointer shrink-0"
+              >
+                {emailSending ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Dispatching...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send Report</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {emailSuccess && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-emerald-950/80 border border-emerald-800/80 text-emerald-300 text-xs mt-2 animate-in fade-in duration-200">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{emailSuccess}</span>
+                </div>
+                {fallbackMailto && (
+                  <a
+                    href={fallbackMailto}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300 hover:text-white underline shrink-0 cursor-pointer"
+                  >
+                    <span>Open in Email App</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {emailError && (
+              <div className="p-2.5 rounded-lg bg-rose-950/80 border border-rose-800/80 text-rose-300 text-xs mt-2 animate-in fade-in duration-200">
+                {emailError}
+              </div>
+            )}
+          </form>
         </div>
 
         {/* Footer Actions */}

@@ -15,7 +15,8 @@ import {
   BarChart3,
   Copy,
   Check,
-  Sparkles
+  Sparkles,
+  Mail
 } from 'lucide-react';
 
 interface TelemetrySummary {
@@ -108,6 +109,7 @@ export const AppAnalyticsModal: React.FC<AppAnalyticsModalProps> = ({
 }) => {
   const [data, setData] = useState<TelemetrySummary | null>(null);
   const [stripeData, setStripeData] = useState<StripeLiveStatus | null>(null);
+  const [emailLeadsData, setEmailLeadsData] = useState<{ total: number; hasResendKey: boolean; leads: any[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedGA, setCopiedGA] = useState(false);
@@ -116,9 +118,10 @@ export const AppAnalyticsModal: React.FC<AppAnalyticsModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const [res, stripeRes] = await Promise.all([
+      const [res, stripeRes, emailRes] = await Promise.all([
         fetch('/api/analytics/summary'),
         fetch('/api/stripe-status').catch(() => null),
+        fetch('/api/email-leads').catch(() => null),
       ]);
       if (!res.ok) throw new Error('Failed to fetch app telemetry');
       const json = await res.json();
@@ -127,6 +130,11 @@ export const AppAnalyticsModal: React.FC<AppAnalyticsModalProps> = ({
       if (stripeRes && stripeRes.ok) {
         const stripeJson = await stripeRes.json();
         setStripeData(stripeJson);
+      }
+
+      if (emailRes && emailRes.ok) {
+        const emailJson = await emailRes.json();
+        setEmailLeadsData(emailJson);
       }
     } catch (err: any) {
       setError(err.message || 'Unable to connect to server analytics');
@@ -415,6 +423,62 @@ export const AppAnalyticsModal: React.FC<AppAnalyticsModalProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* Captured Author Email Leads & Dispatch Engine */}
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Mail className="w-4 h-4 text-emerald-400" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                  Captured Author Email Leads
+                </h4>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
+                  {emailLeadsData?.total ?? 0} Captured
+                </span>
+              </div>
+              <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${emailLeadsData?.hasResendKey ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <span>{emailLeadsData?.hasResendKey ? 'Resend API Active' : 'Internal Leads Queue'}</span>
+              </span>
+            </div>
+
+            {emailLeadsData?.leads && emailLeadsData.leads.length > 0 ? (
+              <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1 no-scrollbar">
+                {emailLeadsData.leads.map((lead: any) => (
+                  <div
+                    key={lead.id}
+                    className="flex items-center justify-between p-2 rounded-lg bg-slate-900/50 border border-slate-800/60 text-xs"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Mail className="w-3.5 h-3.5 text-slate-400" />
+                      <div>
+                        <span className="font-mono font-medium text-slate-200">{lead.email}</span>
+                        <span className="text-slate-400 ml-2 text-[11px]">
+                          Book: {lead.bookTitle || 'Untitled'} (Score: {lead.overallScore}/100)
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                        lead.delivered
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-slate-800 text-slate-300'
+                      }`}>
+                        {lead.delivered ? 'Emailed' : 'Captured'}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-500">
+                        {new Date(lead.timestamp).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-4 text-slate-500 text-xs bg-slate-900/30 rounded-lg border border-slate-900">
+                No email reports requested yet. When authors export their scorecard via email, their addresses will appear here.
+              </div>
+            )}
           </div>
 
           {/* Recent Live Activity Stream */}

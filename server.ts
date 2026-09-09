@@ -724,6 +724,284 @@ app.get("/api/analytics/summary", (_req, res) => {
   });
 });
 
+// --- Outbound Email Delivery & Author Lead Capturing Engine ---
+interface EmailLeadRecord {
+  id: string;
+  email: string;
+  bookTitle: string;
+  overallScore: number;
+  timestamp: string;
+  delivered: boolean;
+  provider: string;
+}
+const emailLeads: EmailLeadRecord[] = [];
+
+app.post("/api/send-report-email", async (req, res) => {
+  try {
+    const {
+      recipientEmail,
+      bookTitle = "Untitled Book",
+      genre = "General Fiction / Non-Fiction",
+      overallScore = 0,
+      overallStatus = "NEEDS ATTENTION",
+      computed = {},
+      sections = [],
+      shareUrl = "https://kdp-score-board.vercel.app",
+    } = req.body;
+
+    if (!recipientEmail || typeof recipientEmail !== "string" || !recipientEmail.includes("@")) {
+      return res.status(400).json({ error: "Please provide a valid recipient email address." });
+    }
+
+    const cleanEmail = recipientEmail.trim().toLowerCase();
+    const scoreNum = Number(overallScore) || 0;
+    const scoreColor = scoreNum >= 75 ? "#10b981" : scoreNum >= 50 ? "#f59e0b" : "#ef4444";
+    const statusText = String(overallStatus).toUpperCase();
+
+    // Generate responsive HTML report email
+    const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KDP Book Diagnostic Scorecard: ${escapeHtml(bookTitle)}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e4e4e7; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+    <!-- Header -->
+    <tr>
+      <td style="background-color: #09090b; padding: 28px 32px; color: #ffffff;">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #a1a1aa; font-weight: 700; margin-bottom: 6px;">
+          KDP Author Health Scorecard
+        </div>
+        <h1 style="margin: 0 0 4px 0; font-size: 22px; font-weight: 700; color: #ffffff;">
+          ${escapeHtml(bookTitle)}
+        </h1>
+        <div style="font-size: 13px; color: #71717a;">
+          Genre: ${escapeHtml(genre)} · Diagnostic Audit Report
+        </div>
+      </td>
+    </tr>
+
+    <!-- Score Overview Banner -->
+    <tr>
+      <td style="padding: 24px 32px; border-bottom: 1px solid #e4e4e7; background-color: #fafafa;">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0">
+          <tr>
+            <td>
+              <div style="font-size: 12px; color: #71717a; text-transform: uppercase; font-weight: 600;">Overall Funnel Health</div>
+              <div style="font-size: 32px; font-weight: 800; font-family: monospace; color: #09090b;">
+                ${scoreNum}<span style="font-size: 18px; color: #a1a1aa; font-weight: 500;">/100</span>
+              </div>
+            </td>
+            <td align="right">
+              <span style="display: inline-block; padding: 6px 14px; background-color: ${scoreColor}15; color: ${scoreColor}; border: 1px solid ${scoreColor}40; border-radius: 9999px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
+                ${escapeHtml(statusText)}
+              </span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Key Metrics Grid -->
+    <tr>
+      <td style="padding: 24px 32px;">
+        <div style="font-size: 13px; font-weight: 700; color: #09090b; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Key Funnel & Financial Outcomes
+        </div>
+        <table width="100%" border="0" cellspacing="8" cellpadding="0" style="margin: 0 -8px;">
+          <tr>
+            <td width="50%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;">
+              <div style="font-size: 11px; color: #64748b;">Est. Monthly Net Profit</div>
+              <div style="font-size: 18px; font-weight: 700; font-family: monospace; color: #0f172a; margin-top: 2px;">
+                $${Number(computed.netProfit || 0).toFixed(2)}
+              </div>
+            </td>
+            <td width="50%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;">
+              <div style="font-size: 11px; color: #64748b;">Ad ACoS</div>
+              <div style="font-size: 18px; font-weight: 700; font-family: monospace; color: #0f172a; margin-top: 2px;">
+                ${computed.acos || 0}%
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td width="50%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;">
+              <div style="font-size: 11px; color: #64748b;">Click-Through Rate (CTR)</div>
+              <div style="font-size: 18px; font-weight: 700; font-family: monospace; color: #0f172a; margin-top: 2px;">
+                ${computed.ctr || 0}%
+              </div>
+            </td>
+            <td width="50%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px;">
+              <div style="font-size: 11px; color: #64748b;">Sales Conversion Rate</div>
+              <div style="font-size: 18px; font-weight: 700; font-family: monospace; color: #0f172a; margin-top: 2px;">
+                ${computed.conversionRate || 0}%
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Diagnostic Areas -->
+    ${Array.isArray(sections) && sections.length > 0 ? `
+    <tr>
+      <td style="padding: 0 32px 24px 32px;">
+        <div style="font-size: 13px; font-weight: 700; color: #09090b; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Priority Recommendations
+        </div>
+        ${sections.slice(0, 4).map((sec: any) => `
+          <div style="background-color: #ffffff; border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <strong style="font-size: 13px; color: #18181b;">${escapeHtml(sec.title || 'Diagnostic Area')}</strong>
+              <span style="font-family: monospace; font-weight: 700; font-size: 12px; color: #52525b;">${sec.score || 0}/100</span>
+            </div>
+            <p style="margin: 0; font-size: 12px; color: #52525b; line-height: 1.45;">
+              ${escapeHtml(sec.prescription || sec.headline || 'Audit completed.')}
+            </p>
+          </div>
+        `).join('')}
+      </td>
+    </tr>
+    ` : ''}
+
+    <!-- CTA Button -->
+    <tr>
+      <td style="padding: 0 32px 32px 32px;" align="center">
+        <a href="${escapeHtml(shareUrl)}" target="_blank" style="display: inline-block; background-color: #09090b; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 9999px; font-size: 13px; font-weight: 600; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+          Open Full Interactive Scorecard →
+        </a>
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td style="background-color: #f4f4f5; padding: 16px 32px; font-size: 11px; color: #71717a; text-align: center; border-top: 1px solid #e4e4e7;">
+        Sent by KDP Book Diagnostic Scorecard · Real-Time Funnel Intelligence for Self-Publishers
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `.trim();
+
+    // Plain text version for fallback & mailto
+    const plainTextSummary = `KDP Diagnostic Scorecard: ${bookTitle}
+Overall Score: ${scoreNum}/100 [${statusText}]
+Estimated Net Royalties: $${Number(computed.netProfit || 0).toFixed(0)}/mo
+ACoS: ${computed.acos || 0}% | Conversion Rate: ${computed.conversionRate || 0}% | CTR: ${computed.ctr || 0}%
+
+Review your full interactive scorecard:
+${shareUrl}
+
+Sent via KDP Book Health Scorecard.`;
+
+    const mailtoUrl = `mailto:${encodeURIComponent(cleanEmail)}?subject=${encodeURIComponent(
+      `KDP Diagnostic Scorecard: ${bookTitle} (${scoreNum}/100)`
+    )}&body=${encodeURIComponent(plainTextSummary)}`;
+
+    let delivered = false;
+    let provider = "local_queue";
+    let apiError: string | null = null;
+
+    // Check for Resend API Token in environment variables
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (resendApiKey) {
+      try {
+        const fromEmail = process.env.EMAIL_FROM || "KDP Scorecard <onboarding@resend.dev>";
+        const resendRes = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${resendApiKey.trim()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: fromEmail,
+            to: [cleanEmail],
+            subject: `Your KDP Diagnostic Scorecard: ${bookTitle} (${scoreNum}/100)`,
+            html: emailHtml,
+            text: plainTextSummary,
+          }),
+        });
+
+        if (resendRes.ok) {
+          delivered = true;
+          provider = "resend_api";
+        } else {
+          const errData: any = await resendRes.json().catch(() => ({}));
+          console.warn("Resend API responded with error:", errData);
+          apiError = errData.message || "Failed to dispatch via Resend API";
+        }
+      } catch (sendErr: any) {
+        console.error("Failed to connect to Resend API:", sendErr);
+        apiError = sendErr.message;
+      }
+    }
+
+    // Record author lead in database/telemetry
+    const leadRecord: EmailLeadRecord = {
+      id: "lead_" + Math.random().toString(36).substring(2, 9),
+      email: cleanEmail,
+      bookTitle,
+      overallScore: scoreNum,
+      timestamp: new Date().toISOString(),
+      delivered,
+      provider,
+    };
+    emailLeads.unshift(leadRecord);
+    if (emailLeads.length > 500) emailLeads.pop();
+
+    // Record telemetry event
+    telemetryEvents.unshift({
+      id: "evt_" + Math.random().toString(36).substring(2, 9),
+      event: "report_email_captured",
+      properties: {
+        email: cleanEmail,
+        bookTitle,
+        overallScore: scoreNum,
+        delivered,
+        provider,
+      },
+      timestamp: new Date().toISOString(),
+      sessionId: "email_dispatcher",
+    });
+
+    return res.json({
+      success: true,
+      delivered,
+      provider,
+      apiError,
+      message: delivered
+        ? `Diagnostic scorecard dispatched directly to ${cleanEmail}!`
+        : `Scorecard recorded for ${cleanEmail}! You can also preview or send it directly using your preferred email app below.`,
+      mailtoUrl,
+      leadId: leadRecord.id,
+    });
+  } catch (err: any) {
+    console.error("Error in /api/send-report-email:", err);
+    return res.status(500).json({ error: err.message || "Internal server error" });
+  }
+});
+
+// View collected author email leads
+app.get("/api/email-leads", (_req, res) => {
+  return res.json({
+    total: emailLeads.length,
+    hasResendKey: !!process.env.RESEND_API_KEY,
+    leads: emailLeads.slice(0, 50),
+  });
+});
+
+function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function heuristicParseKDP(text: string) {
   const clean = text.replace(/,/g, "");
   const num = (pattern: RegExp) => {
