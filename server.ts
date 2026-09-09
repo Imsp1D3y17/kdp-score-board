@@ -108,10 +108,12 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// AI Diagnosis Endpoint
-app.post("/api/diagnose", async (req, res) => {
+// AI Diagnosis Endpoint (supports both /api/diagnose and /api/ai-diagnose)
+const handleDiagnoseRequest = async (req: express.Request, res: express.Response) => {
   try {
-    const { bookData, scores, overallScore } = req.body;
+    const bookData = req.body.bookData || req.body.metrics || {};
+    const scores = req.body.scores || {};
+    const overallScore = req.body.overallScore || 50;
     const ai = getGeminiClient();
 
     if (!ai) {
@@ -202,17 +204,22 @@ Format your response in structured JSON with:
       success: true,
       source: "gemini",
       analysis: parsed,
+      ...parsed,
     });
   } catch (err: any) {
     console.error("AI Diagnose error:", err);
-    // Fallback to robust deterministic algorithmic analysis
+    const fallback = generateAlgorithmicAnalysis(req.body.bookData || req.body.metrics, req.body.scores, req.body.overallScore);
     return res.json({
       success: true,
       source: "fallback",
-      analysis: generateAlgorithmicAnalysis(req.body.bookData, req.body.scores, req.body.overallScore),
+      analysis: fallback,
+      ...fallback,
     });
   }
-});
+};
+
+app.post("/api/diagnose", handleDiagnoseRequest);
+app.post("/api/ai-diagnose", handleDiagnoseRequest);
 
 // AI Q&A Advisor Chat (supports /api/chat and /api/ai-chat)
 const handleChatRequest = async (req: express.Request, res: express.Response) => {
